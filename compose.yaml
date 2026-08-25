@@ -1,0 +1,39 @@
+services:
+  dev:
+    image: daily-dev:${USER_NAME:-root}${INSTALL_DOCKER_CLI:+-docker}${INSTALL_CLAUDE_CODE:+-claude}${INSTALL_CODEX:+-codex}
+
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: docker-${INSTALL_DOCKER_CLI:-false}
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12-bookworm}
+        NODE_VERSION: ${NODE_VERSION:-24-bookworm-slim}
+        UV_VERSION: ${UV_VERSION:-0.12.5}
+        DOCKER_CLI_VERSION: ${DOCKER_CLI_VERSION:-28.2.2-cli}
+        USER_NAME: ${USER_NAME:-root}
+        USER_UID: ${USER_UID:-0}
+        USER_GID: ${USER_GID:-0}
+        USER_HOME: ${USER_HOME:-/root}
+        INSTALL_CLAUDE_CODE: ${INSTALL_CLAUDE_CODE:-false}
+        INSTALL_CODEX: ${INSTALL_CODEX:-false}
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        CODEX_VERSION: ${CODEX_VERSION:-latest}
+
+    hostname: ${USER_NAME:-root}-dev
+    init: true
+    stdin_open: true
+    tty: true
+
+    volumes:
+      - type: bind
+        source: ${DEV_DATA_ROOT}/${USER_NAME:-root}/claude
+        target: ${USER_HOME:-/root}/.claude
+        bind:
+          create_host_path: false
+
+      - type: bind
+        source: ${DEV_DATA_ROOT}/${USER_NAME:-root}/codex
+        target: ${USER_HOME:-/root}/.codex
+        bind:
+          create_host_path: false
