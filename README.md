@@ -1,7 +1,8 @@
 # dev-env
 
-一个面向日常开发的通用容器镜像。默认提供完整的 Python、Node.js 和常用
-Linux 开发工具，并允许按需加入 Claude Code、Codex 和 Docker 客户端。
+一个面向日常开发的通用容器镜像。默认提供完整的 Python、Node.js、SSH
+Server、Herdr 和常用 Linux 开发工具，并允许按需加入 Claude Code、Codex
+和 Docker 客户端。
 
 ## 设计概览
 
@@ -9,17 +10,24 @@ Linux 开发工具，并允许按需加入 Claude Code、Codex 和 Docker 客户
   开发库。
 - 从官方 Node.js 镜像复制 Node.js 和 npm。
 - 从 Astral 官方镜像复制 `uv` 和 `uvx`。
+- 安装 Herdr，默认固定为 `0.8.2`，支持 amd64 和 arm64。
 - 提供 Git、OpenSSH Client、curl、wget、ripgrep、sudo、zip/unzip、xz、
   procps 和 psmisc 等日常工具。
+- SSH Server 默认启动，仅允许公钥认证；授权公钥由环境变量注入，SSH host
+  key 在镜像构建时生成并随镜像复用。
+- `IN_MAINLAND=true` 时使用 CERNET 的 Debian、pip、uv 镜像和 npmmirror
+  的 npm registry。
 - 时区为 `Asia/Shanghai`，默认工作目录是容器用户的 HOME。
 - Claude Code 和 Codex 默认不安装；启用后以最终容器用户安装到
   `~/.local`，可以不使用 sudo 临时升级。
 - Docker CLI、Compose 和 Buildx 默认不安装。关闭时不会解析或下载
   `docker:*` 供体镜像；开启时也只加入客户端，不包含 Docker daemon。
-- 不挂载代码或 workspace，只持久化 `~/.claude` 和 `~/.codex`。
+- Claude Code 和 Codex 数据分别固定在 `/agent-data/claude` 和
+  `/agent-data/codex`，与 root/dev 的 HOME 无关。
 
-基础镜像的默认用户是 `root:0:0`。如果通过环境变量指定其他用户，构建时
-会创建同名用户和用户组，并配置免密码 sudo。
+默认构建固定的非 root 账户 `dev`，HOME 为 `/workspace`，并配置免密码
+sudo。只需要让它的数字 UID/GID 与宿主机用户一致，不要求用户名一致。
+root 是独立的多阶段构建分支，HOME 始终为 `/root`。
 
 ## 快速使用
 
@@ -29,86 +37,179 @@ Linux 开发工具，并允许按需加入 Claude Code、Codex 和 Docker 客户
 cp .env.example .env
 ```
 
-根据服务器用户修改以下四项。四项应一起设置：
+默认使用 dev 分支。根据服务器用户修改 UID/GID；容器内用户名固定为
+`dev`，HOME 固定为 `/workspace`：
 
 ```dotenv
-USER_NAME=zhang
+USER_MODE=dev
 USER_UID=1001
 USER_GID=1001
-USER_HOME=/home/zhang
 ```
 
 可以通过下面的命令查看当前宿主机用户信息：
 
 ```bash
-id -un
 id -u
 id -g
 ```
 
-如果希望保留基础镜像的 root 用户，则使用：
+如果需要 root 镜像，只切换构建分支即可；该分支忽略 `USER_UID` 和
+`USER_GID`：
 
 ```dotenv
-USER_NAME=root
-USER_UID=0
-USER_GID=0
-USER_HOME=/root
+USER_MODE=root
 ```
 
-在首次启动前创建 Claude/Codex 的宿主机目录，并确保容器 UID/GID 可写：
+两个分支完全独立，不创建 `/workspace -> /root` 软链接，Dockerfile 构建时
+生成的启动脚本也不会动态推断或改写 HOME。
+
+在 `.env` 中填写一整行用于登录的 OpenSSH 公钥，例如：
+
+```dotenv
+SSH_PUBLIC_KEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@example
+```
+
+创建 Compose 所需的 agent 数据目录：
 
 ```bash
-set -a
-. ./.env
-set +a
-
-sudo install -d -m 0755 -o "$USER_UID" -g "$USER_GID" \
-  "$DEV_DATA_ROOT/$USER_NAME/claude" \
-  "$DEV_DATA_ROOT/$USER_NAME/codex"
+mkdir -p ./data/claude ./data/codex
 ```
 
-构建并进入容器：
+在远程 Linux 主机上使用 dev 分支时，目录应允许配置的 UID/GID 读写。
+然后构建并进入容器：
 
 ```bash
 docker compose build
 docker compose run --rm dev
 ```
 
-容器默认进入 `${USER_HOME}`，退出 shell 后临时容器会被删除；挂载的
-Claude/Codex 配置和会话仍保留在宿主机。
+root 容器默认进入 `/root`，非 root 容器默认进入 `/workspace`。Compose 将
+Claude Code 和 Codex 数据绑定到固定的 `/agent-data` 子目录，所以两种模式
+使用完全相同的挂载目标；其他容器内状态不会随容器删除而保留。
 
 ## 可选组件
 
-在 `.env` 中启用需要的组件，然后重新执行 `docker compose build`：
+Claude Code、Codex 和 Docker CLI 都默认关闭。需要时在 `.env` 中分别启用，
+然后重新执行 `docker compose build`：
 
 ```dotenv
-INSTALL_CLAUDE_CODE=true
+INSTALL_CLAUDE=true
 INSTALL_CODEX=true
 INSTALL_DOCKER_CLI=true
 ```
 
-关闭组件时应将对应变量留空，不要写成 `false`。Compose 根据变量是否为空
-自动为镜像标签增加后缀：
+关闭组件时将对应变量留空。Compose 根据非空的启用变量为镜像标签增加后缀：
 
 | 启用的组件 | 镜像标签示例 |
 | --- | --- |
-| 无 | `daily-dev:zhang` |
-| Docker | `daily-dev:zhang-docker` |
-| Claude Code | `daily-dev:zhang-claude` |
-| Codex | `daily-dev:zhang-codex` |
-| 全部 | `daily-dev:zhang-docker-claude-codex` |
+| 无 | `daily-dev:dev` |
+| Docker | `daily-dev:dev-docker` |
+| Claude Code | `daily-dev:dev-claude` |
+| Codex | `daily-dev:dev-codex` |
+| 全部 | `daily-dev:dev-docker-claude-codex` |
 
 也可以固定版本：
 
 ```dotenv
-CLAUDE_CODE_VERSION=latest
+CLAUDE_VERSION=latest
 CODEX_VERSION=latest
-DOCKER_CLI_VERSION=28.2.2-cli
+DOCKER_CLI_VERSION=28.5.1-cli
+HERDR_VERSION=0.8.2
 ```
 
 Claude Code 和 Codex 的自动更新默认关闭。可以在运行中的容器里使用 npm
 手动更新，但这种 CLI 更新位于容器可写层，删除容器后不会保留；需要永久
 升级时应更新版本变量并重建镜像。
+
+Herdr 始终安装到 `/usr/local/bin/herdr`。构建会根据目标架构选择官方 release
+中的 `herdr-linux-x86_64` 或 `herdr-linux-aarch64`，并执行 `herdr --version`
+确认二进制可运行。当前按要求不做 SHA-256 校验；下载依赖 GitHub HTTPS 和
+curl 的连接/HTTP 错误检查。
+
+## 中国大陆镜像
+
+在 `.env` 中启用：
+
+```dotenv
+IN_MAINLAND=true
+```
+
+启用后会进行以下配置：
+
+| 工具 | 配置 |
+| --- | --- |
+| Debian | `https://mirrors.cernet.edu.cn/debian` 和 `https://mirrors.cernet.edu.cn/debian-security` |
+| pip | `global.index-url = https://mirrors.cernet.edu.cn/pypi/web/simple` |
+| uv | `~/.config/uv/uv.toml` 中的默认 CERNET index |
+| npm | `registry = https://registry.npmmirror.com` |
+
+Debian 源在安装系统包之前切换。pip、uv 和 npm 配置在 Dockerfile 进入选定的
+root 或 dev 分支后写入对应 HOME，其中 npm registry 也会用于构建阶段可选的
+Claude Code/Codex 安装。关闭时使用 `IN_MAINLAND=false`，保留各工具的上游
+默认源。
+
+Debian 的 DEB822/传统源路径和替换规则参考
+[CERNET Debian 帮助](https://help.mirrors.cernet.edu.cn/debian/)与
+[CERNET Debian Security 帮助](https://help.mirrors.cernet.edu.cn/debian-security/)。
+CERNET 文档提醒安全更新镜像可能存在同步延迟；这里按 `IN_MAINLAND=true`
+的显式选择同时切换普通仓库和安全更新仓库。
+
+## SSH Server
+
+SSH Server 始终启动，只接受 `authorized_keys` 中的公钥；密码认证、键盘交互
+认证和空密码均已关闭。root 用户也只能使用密钥登录。默认端口只绑定到宿主机
+回环地址。`SSH_PUBLIC_KEY` 可以为空，此时 SSH Server 仍会启动，但镜像不会
+注入任何可用于登录的公钥：
+
+```dotenv
+SSH_BIND_IP=127.0.0.1
+SSH_HOST_PORT=2222
+SSH_PUBLIC_KEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@example
+```
+
+使用 `docker compose up -d` 启动长期容器后，可以从宿主机连接：
+
+```bash
+ssh -p 2222 dev@127.0.0.1
+```
+
+root 模式则使用 `root@127.0.0.1`。
+
+如需从其他机器访问，显式设置 `SSH_BIND_IP=0.0.0.0`，并同时配置宿主机和
+云平台防火墙，只开放确实需要的来源地址。SSH host key 在镜像构建时生成；
+同一镜像启动的容器使用相同 host key，重新构建镜像后 key 可能变化。因为
+服务端私钥存在于镜像层中，不应把该镜像发布到不可信的公共仓库。Dockerfile
+生成的启动脚本会在每次启动时重写当前用户的 `~/.ssh/authorized_keys`。
+
+## HTTP 代理
+
+如果服务器访问外网需要 HTTP 代理，在 `.env` 中配置：
+
+```dotenv
+http_proxy=http://proxy.example.com:7890
+https_proxy=http://proxy.example.com:7890
+no_proxy=localhost,127.0.0.1,::1
+```
+
+Compose 会同时把大小写形式的代理变量传给镜像构建步骤和运行中的开发
+容器，因此 `apt-get`、npm、Claude Code 和 Codex 都可以读取。代理值不会
+通过 Dockerfile `ENV` 固化进镜像，但会出现在运行中容器的环境配置里；包含
+账号密码时不要提交 `.env`。仓库的 `.gitignore` 和 `.dockerignore` 都排除了
+`.env`，避免它进入 Git 或 Docker build context。
+
+如果代理只监听在 Linux 宿主机的 `127.0.0.1`，构建容器默认无法访问它。
+此时可以让构建步骤使用宿主机网络：
+
+```dotenv
+http_proxy=http://127.0.0.1:7890
+https_proxy=http://127.0.0.1:7890
+BUILD_NETWORK=host
+```
+
+`BUILD_NETWORK=host` 只作用于镜像构建。运行后的容器仍不能通过容器自身的
+`127.0.0.1` 访问宿主机代理；运行阶段如需代理，应使用容器可达的宿主机地址，
+或另外为服务配置 host 网络。代理可以从 Docker bridge 网络直接访问时，保留
+默认的 `BUILD_NETWORK=default`。
 
 ## Docker 客户端
 
@@ -122,15 +223,15 @@ Compose 配置不会自动挂载 `/var/run/docker.sock`。如需操作宿主机 
 应在启动容器时显式挂载 socket，并处理容器用户与 socket 的组权限。挂载
 Docker socket 基本等同于授予容器宿主机 root 权限，应只在可信环境使用。
 
-## 持久化目录
+### 检查 Docker API
 
-Compose 使用以下映射：
+挂载宿主机 Docker socket 后，在容器内执行：
 
-| 宿主机 | 容器内 |
-| --- | --- |
-| `${DEV_DATA_ROOT}/${USER_NAME}/claude` | `${USER_HOME}/.claude` |
-| `${DEV_DATA_ROOT}/${USER_NAME}/codex` | `${USER_HOME}/.codex` |
+```bash
+docker version --format \
+  'client={{.Client.Version}} client_api={{.Client.APIVersion}} server={{.Server.Version}} server_api={{.Server.APIVersion}} min_api={{.Server.MinAPIVersion}}'
+docker info >/dev/null
+```
 
-`CLAUDE_CONFIG_DIR` 和 `CODEX_HOME` 已显式指向上述目录，因此认证信息、配置
-和相关状态可以随挂载目录一起保留。宿主机源目录必须预先存在，Compose
-不会自动创建。
+CLI 与 daemon 版本不必完全一致，Docker 会自动协商双方支持的 API；不要设置
+`DOCKER_API_VERSION`，否则会关闭自动协商。
