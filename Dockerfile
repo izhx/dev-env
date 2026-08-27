@@ -108,14 +108,56 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 # Reuse uv and uvx from Astral's official distroless image.
 COPY --from=uv /uv /uvx /usr/local/bin/
 
+# Apply package mirrors system-wide so both dev and root inherit them. User and
+# project configuration can still override these defaults.
+RUN if [ "${IN_MAINLAND}" = "true" ]; then \
+        printf '%s\n' \
+            '[global]' \
+            'index-url = https://mirrors.cernet.edu.cn/pypi/web/simple' \
+            > /etc/pip.conf; \
+        install -d -m 0755 /etc/uv; \
+        printf '%s\n' \
+            '[[index]]' \
+            'url = "https://mirrors.cernet.edu.cn/pypi/web/simple"' \
+            'default = true' \
+            > /etc/uv/uv.toml; \
+        printf '%s\n' \
+            'registry=https://registry.npmmirror.com' \
+            > /etc/npmrc; \
+        chmod 0644 /etc/pip.conf /etc/uv/uv.toml /etc/npmrc; \
+    fi
+
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     TZ=Asia/Shanghai \
     DISABLE_AUTOUPDATER=1 \
+    NPM_CONFIG_GLOBALCONFIG=/etc/npmrc \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     UV_LINK_MODE=copy \
     CLAUDE_CONFIG_DIR=/agent-data/claude \
     CODEX_HOME=/agent-data/codex
+
+# Install optional agent CLIs once into the system npm prefix. Runtime users
+# keep writable state under /agent-data and may temporarily override these
+# versions by installing newer packages into their own npm prefix.
+RUN install -d -m 0755 /agent-data \
+    && install -d -m 0700 \
+        "${CLAUDE_CONFIG_DIR}" \
+        "${CODEX_HOME}" \
+    && if [ "${INSTALL_CLAUDE}" = "true" ]; then \
+        npm install --global \
+            --allow-scripts="@anthropic-ai/claude-code" \
+            "@anthropic-ai/claude-code@${CLAUDE_VERSION}"; \
+    fi \
+    && if [ "${INSTALL_CODEX}" = "true" ]; then \
+        npm install --global "@openai/codex@${CODEX_VERSION}"; \
+    fi \
+    && if [ "${INSTALL_CLAUDE}" = "true" ] \
+        || [ "${INSTALL_CODEX}" = "true" ]; then \
+        npm cache clean --force; \
+    fi \
+    && if [ "${INSTALL_CLAUDE}" = "true" ]; then claude --version; fi \
+    && if [ "${INSTALL_CODEX}" = "true" ]; then codex --version; fi
 
 EXPOSE 22
 
@@ -145,8 +187,9 @@ RUN if [ "${USER_UID}" = "0" ] || [ "${USER_GID}" = "0" ]; then \
     && printf '%s\n' 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev \
     && chmod 0440 /etc/sudoers.d/dev
 
-# /agent-data is outside HOME, so create it with dev ownership before USER dev.
-RUN install -d -m 0755 -o dev -g dev /agent-data
+# /agent-data comes from the common root-owned stage. Give dev ownership of its
+# writable agent state before switching users.
+RUN chown -R dev:dev /agent-data
 
 ENV HOME=/workspace \
     USER=dev \
@@ -157,42 +200,10 @@ ENV HOME=/workspace \
 USER dev
 WORKDIR /workspace
 
-# Apply user-scoped mirrors only after switching to dev, then install optional
-# agent CLIs into dev's own npm prefix.
-RUN install -d -m 0700 \
-        "${HOME}/.ssh" \
-        "${CLAUDE_CONFIG_DIR}" \
-        "${CODEX_HOME}" \
-    && if [ "${IN_MAINLAND}" = "true" ]; then \
-        pip config set global.index-url \
-            https://mirrors.cernet.edu.cn/pypi/web/simple; \
-        install -d -m 0755 "${HOME}/.config/uv"; \
-        printf '%s\n' \
-            '[[index]]' \
-            'url = "https://mirrors.cernet.edu.cn/pypi/web/simple"' \
-            'default = true' \
-            > "${HOME}/.config/uv/uv.toml"; \
-        npm config set registry https://registry.npmmirror.com; \
-    fi \
-    && if [ "${INSTALL_CLAUDE}" = "true" ]; then \
-        npm install --global \
-            --allow-scripts="@anthropic-ai/claude-code" \
-            "@anthropic-ai/claude-code@${CLAUDE_VERSION}"; \
-    fi \
-    && if [ "${INSTALL_CODEX}" = "true" ]; then \
-        npm install --global "@openai/codex@${CODEX_VERSION}"; \
-    fi \
-    && if [ "${INSTALL_CLAUDE}" = "true" ] \
-        || [ "${INSTALL_CODEX}" = "true" ]; then \
-        npm cache clean --force; \
-    fi \
-    && if [ "${INSTALL_CLAUDE}" = "true" ]; then claude --version; fi \
-    && if [ "${INSTALL_CODEX}" = "true" ]; then codex --version; fi
+RUN install -d -m 0700 "${HOME}/.ssh"
 
 # The root branch leaves /root intact and has no /workspace compatibility link.
 FROM runtime-common AS root-runtime
-
-RUN install -d -m 0755 /agent-data
 
 ENV HOME=/root \
     USER=root \
@@ -203,36 +214,7 @@ ENV HOME=/root \
 USER root
 WORKDIR /root
 
-# Apply the same user-scoped configuration directly to root's real home.
-RUN install -d -m 0700 \
-        "${HOME}/.ssh" \
-        "${CLAUDE_CONFIG_DIR}" \
-        "${CODEX_HOME}" \
-    && if [ "${IN_MAINLAND}" = "true" ]; then \
-        pip config set global.index-url \
-            https://mirrors.cernet.edu.cn/pypi/web/simple; \
-        install -d -m 0755 "${HOME}/.config/uv"; \
-        printf '%s\n' \
-            '[[index]]' \
-            'url = "https://mirrors.cernet.edu.cn/pypi/web/simple"' \
-            'default = true' \
-            > "${HOME}/.config/uv/uv.toml"; \
-        npm config set registry https://registry.npmmirror.com; \
-    fi \
-    && if [ "${INSTALL_CLAUDE}" = "true" ]; then \
-        npm install --global \
-            --allow-scripts="@anthropic-ai/claude-code" \
-            "@anthropic-ai/claude-code@${CLAUDE_VERSION}"; \
-    fi \
-    && if [ "${INSTALL_CODEX}" = "true" ]; then \
-        npm install --global "@openai/codex@${CODEX_VERSION}"; \
-    fi \
-    && if [ "${INSTALL_CLAUDE}" = "true" ] \
-        || [ "${INSTALL_CODEX}" = "true" ]; then \
-        npm cache clean --force; \
-    fi \
-    && if [ "${INSTALL_CLAUDE}" = "true" ]; then claude --version; fi \
-    && if [ "${INSTALL_CODEX}" = "true" ]; then codex --version; fi
+RUN install -d -m 0700 "${HOME}/.ssh"
 
 # Docker CLI is a separate donor so the default targets do not pull it.
 FROM docker:${DOCKER_CLI_VERSION} AS docker-cli
