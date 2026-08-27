@@ -13,8 +13,6 @@ ARG INSTALL_CLAUDE=false
 ARG INSTALL_CODEX=false
 ARG CLAUDE_VERSION=latest
 ARG CODEX_VERSION=latest
-ARG HERDR_VERSION=0.8.2
-ARG TARGETARCH
 
 RUN if [ "${IN_MAINLAND}" = "true" ]; then \
         if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
@@ -46,23 +44,6 @@ RUN if [ "${IN_MAINLAND}" = "true" ]; then \
         zip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
-# Install the requested Herdr release for the target architecture.
-RUN set -eu; \
-    case "${TARGETARCH}" in \
-        amd64) herdr_asset="herdr-linux-x86_64" ;; \
-        arm64) herdr_asset="herdr-linux-aarch64" ;; \
-        *) \
-            echo "unsupported Herdr target architecture: ${TARGETARCH}" >&2; \
-            exit 1; \
-            ;; \
-    esac; \
-    curl --location --fail --silent --show-error \
-        --retry 3 --connect-timeout 15 --max-time 600 \
-        --output /usr/local/bin/herdr \
-        "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/${herdr_asset}"; \
-    chmod 0755 /usr/local/bin/herdr; \
-    herdr --version
 
 # Keep the key-only SSH policy and generated host keys entirely in the image.
 RUN install -d -m 0755 /run/sshd /etc/ssh/sshd_config.d \

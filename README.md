@@ -1,8 +1,8 @@
 # dev-env
 
 一个面向日常开发的通用容器镜像。默认提供完整的 Python、Node.js、SSH
-Server、Herdr 和常用 Linux 开发工具，并允许按需加入 Claude Code、Codex
-和 Docker 客户端。
+Server 和常用 Linux 开发工具，并允许按需加入 Claude Code、Codex 和 Docker
+客户端。
 
 ## 设计概览
 
@@ -10,7 +10,6 @@ Server、Herdr 和常用 Linux 开发工具，并允许按需加入 Claude Code�
   开发库。
 - 从官方 Node.js 镜像复制 Node.js 和 npm。
 - 从 Astral 官方镜像复制 `uv` 和 `uvx`。
-- 安装 Herdr，默认固定为 `0.8.2`，支持 amd64 和 arm64。
 - 提供 Git、OpenSSH Client、curl、wget、ripgrep、sudo、zip/unzip、xz、
   procps 和 psmisc 等日常工具。
 - SSH Server 默认启动，仅允许公钥认证；授权公钥由环境变量注入，SSH host
@@ -115,7 +114,6 @@ INSTALL_DOCKER_CLI=true
 CLAUDE_VERSION=latest
 CODEX_VERSION=latest
 DOCKER_CLI_VERSION=28.5.1-cli
-HERDR_VERSION=0.8.2
 ```
 
 Claude Code 和 Codex 的自动更新默认关闭。镜像内版本由 root 安装到
@@ -132,11 +130,6 @@ hash -r
 
 新版会安装到 `/workspace/.local`；该路径优先于 `/usr/local/bin`，但这种临时
 覆盖位于容器可写层，删除容器后不会保留。
-
-Herdr 始终安装到 `/usr/local/bin/herdr`。构建会根据目标架构选择官方 release
-中的 `herdr-linux-x86_64` 或 `herdr-linux-aarch64`，并执行 `herdr --version`
-确认二进制可运行。当前按要求不做 SHA-256 校验；下载依赖 GitHub HTTPS 和
-curl 的连接/HTTP 错误检查。
 
 ## 中国大陆镜像
 

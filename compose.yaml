@@ -19,7 +19,6 @@ services:
         INSTALL_CODEX: ${INSTALL_CODEX:-false}
         CLAUDE_VERSION: ${CLAUDE_VERSION:-latest}
         CODEX_VERSION: ${CODEX_VERSION:-latest}
-        HERDR_VERSION: ${HERDR_VERSION:-0.8.2}
         http_proxy: ${http_proxy:-}
         https_proxy: ${https_proxy:-}
         no_proxy: ${no_proxy:-}
