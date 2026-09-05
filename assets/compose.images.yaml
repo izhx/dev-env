@@ -1,0 +1,6 @@
+# Image-name fragments selected by ../compose.yaml; these are not extra containers.
+services:
+  docker-false:
+    image: daily-dev:${USER_MODE:-dev}
+  docker-true:
+    image: daily-dev:${USER_MODE:-dev}-docker

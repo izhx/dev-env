@@ -1,6 +1,8 @@
 services:
   dev:
-    image: daily-dev:${USER_MODE:-dev}${INSTALL_DOCKER_CLI:+-docker}${INSTALL_CLAUDE:+-claude}${INSTALL_CODEX:+-codex}
+    extends:
+      file: assets/compose.images.yaml
+      service: docker-${INSTALL_DOCKER_CLI:-false}
 
     build:
       context: .
@@ -15,30 +17,17 @@ services:
         USER_UID: ${USER_UID:-1000}
         USER_GID: ${USER_GID:-1000}
         IN_MAINLAND: ${IN_MAINLAND:-false}
-        INSTALL_CLAUDE: ${INSTALL_CLAUDE:-false}
-        INSTALL_CODEX: ${INSTALL_CODEX:-false}
-        CLAUDE_VERSION: ${CLAUDE_VERSION:-latest}
-        CODEX_VERSION: ${CODEX_VERSION:-latest}
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy: ${no_proxy:-}
-        HTTP_PROXY: ${http_proxy:-}
-        HTTPS_PROXY: ${https_proxy:-}
-        NO_PROXY: ${no_proxy:-}
 
     hostname: container
-    extra_hosts: container
+    extra_hosts:
       - "container:127.0.1.1"
     init: true
     stdin_open: true
     tty: true
     environment:
-      http_proxy: ${http_proxy:-}
-      https_proxy: ${https_proxy:-}
-      no_proxy: ${no_proxy:-}
-      HTTP_PROXY: ${http_proxy:-}
-      HTTPS_PROXY: ${https_proxy:-}
-      NO_PROXY: ${no_proxy:-}
+      back_http_proxy: ${http_proxy:-}
+      back_https_proxy: ${https_proxy:-}
+      back_no_proxy: ${no_proxy:-}
       SSH_PUBLIC_KEY: ${SSH_PUBLIC_KEY:-}
     ports:
       - "${SSH_BIND_IP:-127.0.0.1}:${SSH_HOST_PORT:-2222}:22"
@@ -47,6 +36,18 @@ services:
     group_add:
       - "${DOCKER_GID}"
     volumes:
+      - type: bind
+        source: ${SSH_SOURCE_DIR:-${HOME}/.ssh}
+        target: /opt/ssh-src
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AGENT_BIN_DIR:-./agent-bin}
+        target: /opt/agent-bin-src
+        read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: /var/run/docker.sock
         target: /var/run/docker.sock

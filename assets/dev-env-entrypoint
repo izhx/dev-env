@@ -1,0 +1,99 @@
+#!/bin/sh
+set -eu
+
+# sshd creates a new session environment; sudo also filters inherited variables.
+configure_ssh_environment() (
+    env_tmp=$(mktemp -d)
+    trap 'rm -rf "${env_tmp}"' 0
+    python3 - "${env_tmp}" <<'PY'
+import os
+from pathlib import Path
+import shlex
+import sys
+
+names = (
+    "LANG", "LC_ALL", "TZ", "DISABLE_AUTOUPDATER",
+    "NPM_CONFIG_GLOBALCONFIG", "NPM_CONFIG_UPDATE_NOTIFIER", "NPM_CONFIG_PREFIX",
+    "UV_LINK_MODE", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "PATH",
+)
+assignments = []
+for name in names:
+    if name not in os.environ:
+        continue
+    value = os.environ[name]
+    if "\n" in value or "\r" in value:
+        raise SystemExit(f"Invalid multiline SSH environment variable: {name}")
+    value = value.replace("\\", "\\\\").replace('"', '\\"')
+    assignments.append(f'"{name}={value}"')
+
+directory = Path(sys.argv[1])
+(directory / "sshd.conf").write_text("SetEnv " + " ".join(assignments) + "\n")
+# Debian's /etc/profile resets PATH after sshd has set it for a login shell.
+(directory / "profile.sh").write_text(
+    "# Restore the development PATH for login shells.\n"
+    + "export PATH=" + shlex.quote(os.environ["PATH"]) + "\n"
+)
+PY
+    sudo install -d -m 0755 /etc/ssh/sshd_config.d /etc/profile.d
+    sudo install -m 0644 "${env_tmp}/sshd.conf" /etc/ssh/sshd_config.d/20-dev-env.conf
+    sudo install -m 0644 "${env_tmp}/profile.sh" /etc/profile.d/20-dev-env.sh
+)
+
+# SSH calls initgroups(), so membership must also exist in /etc/group.
+configure_docker_group() {
+    if [ ! -S /var/run/docker.sock ] || [ "$(id -u)" = "0" ]; then
+        return
+    fi
+    socket_gid=$(stat -c '%g' /var/run/docker.sock)
+    login_user=$(id -un)
+    if group_entry=$(getent group "${socket_gid}"); then
+        socket_group=${group_entry%%:*}
+    else
+        socket_group="host-docker-${socket_gid}"
+        sudo groupadd --gid "${socket_gid}" "${socket_group}"
+    fi
+    case " $(id -G "${login_user}") " in
+        *" ${socket_gid} "*) ;;
+        *) sudo usermod --append --groups "${socket_group}" "${login_user}" ;;
+    esac
+}
+
+for agent in codex claude; do
+    source="/opt/agent-bin-src/${agent}"
+    if [ ! -e "${source}" ] && [ ! -L "${source}" ]; then
+        continue
+    fi
+    if [ ! -f "${source}" ] || [ ! -r "${source}" ]; then
+        echo "Invalid agent binary: ${source}" >&2
+        exit 1
+    fi
+    target="/usr/local/bin/${agent}"
+    temporary=$(sudo mktemp "/usr/local/bin/.${agent}.XXXXXX")
+    if ! sudo install -m 0755 "${source}" "${temporary}" || ! sudo mv -f "${temporary}" "${target}"; then
+        sudo rm -f "${temporary}"
+        exit 1
+    fi
+done
+
+install -d -m 0700 "${HOME}/.ssh"
+if [ -d /opt/ssh-src ]; then
+    sudo cp -RP /opt/ssh-src/. "${HOME}/.ssh/"
+    sudo chown -hR "$(id -u):$(id -g)" "${HOME}/.ssh"
+    find "${HOME}/.ssh" -type d -exec chmod 0700 {} +
+    find "${HOME}/.ssh" -type f -exec chmod 0600 {} +
+fi
+if [ -n "${SSH_PUBLIC_KEY:-}" ]; then
+    rm -f "${HOME}/.ssh/authorized_keys"
+    printf "%s\n" "${SSH_PUBLIC_KEY}" > "${HOME}/.ssh/authorized_keys"
+fi
+if [ ! -e "${HOME}/.ssh/authorized_keys" ]; then
+    touch "${HOME}/.ssh/authorized_keys"
+fi
+chmod 0600 "${HOME}/.ssh/authorized_keys"
+configure_ssh_environment
+configure_docker_group
+sudo install -d -m 0755 /run/sshd
+sudo /usr/sbin/sshd -t
+sudo /usr/sbin/sshd
+
+exec "$@"

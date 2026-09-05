@@ -4,7 +4,7 @@ HERDR_VERSION="v0.8.2"
 CONTAINER_NAME="mycontainer"
 
 mkdir -p ./assets
-curl --output ./assets/herdr https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64
+curl --output ./assets/herdr https://github.com/herdrdev/herdr/releases/download/${HERDR_VERSION}/herdr-linux-x86_64
 
 chmod 0755 ./assets/herdr
 docker cp ./assets/herdr ${CONTAINER_NAME}:/usr/local/bin/herdr

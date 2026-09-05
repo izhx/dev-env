@@ -9,10 +9,6 @@ FROM astral/uv:${UV_VERSION} AS uv
 FROM python:${PYTHON_VERSION} AS runtime-common
 
 ARG IN_MAINLAND=false
-ARG INSTALL_CLAUDE=false
-ARG INSTALL_CODEX=false
-ARG CLAUDE_VERSION=latest
-ARG CODEX_VERSION=latest
 
 RUN if [ "${IN_MAINLAND}" = "true" ]; then \
         if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
@@ -42,6 +38,7 @@ RUN if [ "${IN_MAINLAND}" = "true" ]; then \
         unzip \
         vim \
         zip \
+        jq \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -58,26 +55,6 @@ RUN install -d -m 0755 /run/sshd /etc/ssh/sshd_config.d \
         > /etc/ssh/sshd_config.d/10-key-only.conf \
     && ssh-keygen -A \
     && /usr/sbin/sshd -t
-
-# Generate the runtime entrypoint in the image; keep it out of the build
-# context while retaining a readable, normal shell script.
-RUN printf '%s\n' \
-        '#!/bin/sh' \
-        'set -eu' \
-        '' \
-        'install -d -m 0700 "${HOME}/.ssh"' \
-        ': > "${HOME}/.ssh/authorized_keys"' \
-        'if [ -n "${SSH_PUBLIC_KEY:-}" ]; then' \
-        '    printf "%s\n" "${SSH_PUBLIC_KEY}" > "${HOME}/.ssh/authorized_keys"' \
-        'fi' \
-        'chmod 0600 "${HOME}/.ssh/authorized_keys"' \
-        'sudo install -d -m 0755 /run/sshd' \
-        'sudo /usr/sbin/sshd -t' \
-        'sudo /usr/sbin/sshd' \
-        '' \
-        'exec "$@"' \
-        > /usr/local/bin/dev-env-entrypoint \
-    && chmod 0755 /usr/local/bin/dev-env-entrypoint
 
 # Reuse Node.js and npm from the official Node image.
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
@@ -118,29 +95,16 @@ ENV LANG=C.UTF-8 \
     CLAUDE_CONFIG_DIR=/agent-data/claude \
     CODEX_HOME=/agent-data/codex
 
-# Install optional agent CLIs once into the system npm prefix. Runtime users
-# keep writable state under /agent-data and may temporarily override these
-# versions by installing newer packages into their own npm prefix.
-RUN install -d -m 0755 /agent-data \
+# Agent state remains independent of the binaries supplied at startup.
+RUN install -d -m 0755 /agent-data /opt/agent-bin-src \
     && install -d -m 0700 \
         "${CLAUDE_CONFIG_DIR}" \
-        "${CODEX_HOME}" \
-    && if [ "${INSTALL_CLAUDE}" = "true" ]; then \
-        npm install --global \
-            --allow-scripts="@anthropic-ai/claude-code" \
-            "@anthropic-ai/claude-code@${CLAUDE_VERSION}"; \
-    fi \
-    && if [ "${INSTALL_CODEX}" = "true" ]; then \
-        npm install --global "@openai/codex@${CODEX_VERSION}"; \
-    fi \
-    && if [ "${INSTALL_CLAUDE}" = "true" ] \
-        || [ "${INSTALL_CODEX}" = "true" ]; then \
-        npm cache clean --force; \
-    fi \
-    && if [ "${INSTALL_CLAUDE}" = "true" ]; then claude --version; fi \
-    && if [ "${INSTALL_CODEX}" = "true" ]; then codex --version; fi
+        "${CODEX_HOME}"
 
 EXPOSE 22
+
+COPY --chmod=0755 assets/dev-env-entrypoint /usr/local/bin/dev-env-entrypoint
+RUN /bin/sh -n /usr/local/bin/dev-env-entrypoint
 
 ENTRYPOINT ["/usr/local/bin/dev-env-entrypoint"]
 CMD ["bash"]
