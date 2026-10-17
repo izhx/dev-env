@@ -1,0 +1,5 @@
+.env*
+.git
+agent-bin/
+data/
+.ssh/

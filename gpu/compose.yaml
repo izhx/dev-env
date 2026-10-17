@@ -1,0 +1,100 @@
+name: dev-env-gpu
+
+services:
+  dev:
+    extends:
+      file: assets/compose.images.yaml
+      service: docker-${INSTALL_DOCKER_CLI:-false}
+
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ${USER_MODE:-ubuntu}-docker-${INSTALL_DOCKER_CLI:-false}
+      network: ${BUILD_NETWORK:-default}
+      args:
+        CUDA_IMAGE: ${CUDA_IMAGE:-nvidia/cuda:13.0.2-devel-ubuntu24.04}
+        NODE_VERSION: ${NODE_VERSION:-24-bookworm-slim}
+        UV_VERSION: ${UV_VERSION:-0.12.5}
+        DOCKER_CLI_VERSION: ${DOCKER_CLI_VERSION:-28.5.1-cli}
+        USER_UID: ${USER_UID:-1000}
+        USER_GID: ${USER_GID:-1000}
+        IN_MAINLAND: ${IN_MAINLAND:-false}
+
+    # Host networking: sshd binds SSH_BIND_IP:SSH_HOST_PORT directly.
+    network_mode: ${NETWORK_MODE:-host}
+    hostname: container
+    extra_hosts:
+      - "container:127.0.1.1"
+    working_dir: ${WORKSPACE_DIR:?Set WORKSPACE_DIR in .env}
+    group_add:
+      - "${DOCKER_GID:-999}"
+    # Register the supplementary group for SSH even with the Docker socket off.
+    entrypoint: ["/bin/sh", "/opt/dev-env-host-entrypoint"]
+    command: ["sleep", "infinity"]
+    init: true
+    stdin_open: true
+    tty: true
+    shm_size: ${SHM_SIZE:-8gb}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${GPU_COUNT:-all}
+              capabilities: [gpu]
+    environment:
+      back_http_proxy: ${http_proxy:-}
+      back_https_proxy: ${https_proxy:-}
+      back_no_proxy: ${no_proxy:-}
+      SSH_PUBLIC_KEY: ${SSH_PUBLIC_KEY:-}
+      DEV_EXTRA_GID: ${DOCKER_GID:-999}
+    volumes:
+      - type: bind
+        source: ${SSH_SOURCE_DIR:-${HOME}/.ssh}
+        target: /opt/ssh-src
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AGENT_BIN_DIR:-./agent-bin}
+        target: /opt/agent-bin-src
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CLAUDE_DATA_DIR:-./data/claude}
+        target: /agent-data/claude
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CODEX_DATA_DIR:-./data/codex}
+        target: /agent-data/codex
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${WORKSPACE_DIR}
+        target: ${WORKSPACE_DIR}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./assets/host-entrypoint
+        target: /opt/dev-env-host-entrypoint
+        read_only: true
+        bind:
+          create_host_path: false
+    configs:
+      - source: sshd_host_network
+        target: /etc/ssh/sshd_config.d/05-host-network.conf
+        mode: 0444
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "sshd"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+configs:
+  sshd_host_network:
+    content: |
+      Port ${SSH_HOST_PORT:-2223}
+      ListenAddress ${SSH_BIND_IP:-127.0.0.1}

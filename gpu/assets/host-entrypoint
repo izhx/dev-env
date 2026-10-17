@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+# group_add applies to Docker processes. SSH calls initgroups(), so register
+# the same numeric group in /etc/group without mounting the Docker socket.
+if [ "$(id -u)" != "0" ] && [ -n "${DEV_EXTRA_GID:-}" ]; then
+    case "${DEV_EXTRA_GID}" in
+        *[!0-9]*) echo "DEV_EXTRA_GID must be numeric" >&2; exit 1 ;;
+    esac
+    if group_entry=$(getent group "${DEV_EXTRA_GID}"); then
+        extra_group=${group_entry%%:*}
+    else
+        extra_group="host-docker-${DEV_EXTRA_GID}"
+        sudo groupadd --gid "${DEV_EXTRA_GID}" "${extra_group}"
+    fi
+    sudo usermod --append --groups "${extra_group}" "$(id -un)"
+fi
+
+exec /opt/nvidia/nvidia_entrypoint.sh /usr/local/bin/dev-env-entrypoint "$@"

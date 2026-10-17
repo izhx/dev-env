@@ -1,0 +1,13 @@
+# Only the selected fragment is inherited. Disabling Docker omits the socket
+# mount; compose.yaml configures the supplementary group independently.
+services:
+  docker-false:
+    image: daily-dev-gpu:${USER_MODE:-ubuntu}
+  docker-true:
+    image: daily-dev-gpu:${USER_MODE:-ubuntu}-docker
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false

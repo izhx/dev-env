@@ -1,2 +1,5 @@
 .env
-./agent-bin
+.env.*
+!.env.example
+agent-bin/
+data/
